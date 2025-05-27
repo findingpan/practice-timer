@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Piano Sound Detector</title>
+</head>
+<body>
+  <h2 id="status">Listening...</h2>
+  <p>Timer: <span id="timer">0</span> seconds</p>
+
+  <script>
+    let audioContext = null;
+    let timer = 0;
+    let started = false;
+    let interval = null;
+
+    // Piano frequency range: ~27.5Hz (A0) to ~4186Hz (C8)
+    const minPianoFreq = 27;
+    const maxPianoFreq = 4200;
+
+    async function startListening() {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+
+      source.connect(analyser);
+
+      const bufferLength = analyser.fftSize;
+      const dataArray = new Float32Array(bufferLength);
+
+      function detectPitch() {
+        analyser.getFloatTimeDomainData(dataArray);
+        const freq = detectFrequency(dataArray, audioContext.sampleRate);
+        if (freq && freq >= minPianoFreq && freq <= maxPianoFreq) {
+          document.getElementById('status').textContent = `🎹 Piano sound detected: ${Math.round(freq)} Hz`;
+          if (!started) startTimer();
+        }
+        requestAnimationFrame(detectPitch);
+      }
+
+      detectPitch();
+    }
+
+    function startTimer() {
+      started = true;
+      interval = setInterval(() => {
+        timer++;
+        document.getElementById('timer').textContent = timer;
+      }, 1000);
+    }
+
+    // Auto-correlation pitch detection
+    function detectFrequency(buffer, sampleRate) {
+      let size = buffer.length;
+      let maxSamples = Math.floor(size / 2);
+      let bestOffset = -1;
+      let bestCorrelation = 0;
+      let rms = 0;
+
+      for (let i = 0; i < size; i++) {
+        let val = buffer[i];
+        rms += val * val;
+      }
+      rms = Math.sqrt(rms / size);
+      if (rms < 0.01) return null; // too quiet
+
+      for (let offset = 8; offset < maxSamples; offset++) {
+        let correlation = 0;
+
+        for (let i = 0; i < maxSamples; i++) {
+          correlation += buffer[i] * buffer[i + offset];
+        }
+
+        correlation = correlation / maxSamples;
+
+        if (correlation > bestCorrelation) {
+          bestCorrelation = correlation;
+          bestOffset = offset;
+        }
+      }
+
+      if (bestCorrelation > 0.9) {
+        return sampleRate / bestOffset;
+      }
+
+      return null;
+    }
+
+    // Start the whole thing
+    startListening().catch(err => {
+      document.getElementById('status').textContent = 'Microphone access denied or error.';
+      console.error(err);
+    });
+  </script>
+</body>
+</html>
